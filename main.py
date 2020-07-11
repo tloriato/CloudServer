@@ -14,7 +14,7 @@ Module Docstring
 
 __author__ = "Tiago Loriato"
 __version__ = "0.1.0"
-__license__ = "MIT"
+__license__ = "GNU GPLv3"
 
 class Digimon:
     def __init__(self, htmldoc):
