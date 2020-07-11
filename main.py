@@ -2,6 +2,8 @@
 import sys
 import os
 import requests
+from ratelimit import limits, sleep_and_retry
+import queue as Queue
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv, find_dotenv
 
@@ -16,6 +18,40 @@ __author__ = "Tiago Loriato"
 __version__ = "0.1.0"
 __license__ = "GNU GPLv3"
 
+class CrawlerQueue:  
+    def __init__(self):
+        self.__cache = {}
+        self.__queue = Queue.Queue(maxsize=0)
+    
+    @sleep_and_retry
+    @limits(calls=10, period=60*60)
+    def __get_page_content(self, name):
+      base_url = "https://digimon.fandom.com/wiki/"
+      response = requests.get(base_url + name, headers={'Accept-Encoding': 'identity'})
+      if response.status_code != 200:
+          raise Exception("Failed Call")
+      else:
+        return response.content
+    
+    def get(self):
+        try:
+            digimon_name = self.__queue.get_nowait()
+        except Queue.Empty:
+            return None
+        try:
+            htmldoc = self.__get_page_content(digimon_name)
+            return htmldoc
+        except:
+            self.__queue.put(digimon_name)
+            return None
+
+    def add(self, name):
+        if self.__cache.get(name, None) is None:
+            self.__cache[name] = 1
+            self.__queue.put(name)
+            return True
+        return False
+    
 class Digimon:
     def __init__(self, htmldoc):
         self.__table_trs = BeautifulSoup(htmldoc, "html.parser").table.find_all('tr')
@@ -114,11 +150,7 @@ class Digimon:
             self.variations = variations
         except Exception:
             pass
-          
-
-def get_page_content(url):
-    return requests.get(url, headers={'Accept-Encoding': 'identity'}).content
-
+        
 def database_session():
     from neo4j import GraphDatabase, basic_auth
     driver = GraphDatabase.driver(dot_env["NEO4J_BOLT_IP"], auth=basic_auth(dot_env["NEO4J_USER"], dot_env["NEO4J_PASSWORD"]))
