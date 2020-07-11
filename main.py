@@ -18,41 +18,63 @@ __license__ = "MIT"
 
 class Digimon:
     def __init__(self, htmldoc):
-        self.__table = BeautifulSoup(htmldoc, "html.parser").table.find_all('tr')
-      
+        self.__table_trs = BeautifulSoup(htmldoc, "html.parser").table.find_all('tr')
+
         self.name = self.__get_name()
-        self.level = self.__get_level()
-        self.type = self.__get_type()
-        self.attribute = self.__get_attribute()
-        self.family = self.__get_family()
-        self.prior_forms = self.__get_prior_forms()
-        self.next_forms = self.__get_next_forms()
-        self.variations = self.__get_variations()
+
+        self.level = []
+        self.attribute = []
+        self.type = []
+        self.family = []
+        self.prior_forms = []
+        self.next_forms = []
+        self.variations = []
+
+        for row in self.__table_trs:
+            if row.find(text="Level"):
+                self.level = self.__get_level(row)
+            elif row.find(text="Attribute"):
+                self.attribute = self.__get_attribute(row)
+            elif row.find(text="Type"):
+                self.type = self.__get_type(row)
+            elif row.find(text="Family"):
+                 self.family = self.__get_family(row)
+            elif row.find(text="Prior forms"):
+                self.prior_forms = self.__get_prior_forms(row)
+            elif row.find(text="Next forms"):
+                self.next_forms = self.__get_next_forms(row)
+            elif row.find(text="Variations"):
+                # TODO: Fix this. We call this function twice because of the "expand" element
+                # when it should be called just once. Right now we are ignoring the error on the second call inside
+                # the function and leaving the instance variable untouched
+                self.__set_variations(row)
+            else:
+              pass
 
     def __str__(self):
       return f"Name: {self.name} \nLevel: {self.level} \nType: {self.type} \nAttribute: {self.attribute} \nFamily: {self.family} \nPrior Forms: {self.prior_forms} \nNext Forms: {self.next_forms} \nVariations: {self.variations}"
 
     def __get_name(self):
-        return self.__table[0].td.span.b.string.strip()
+        return self.__table_trs[0].td.span.b.string.strip()
 
-    def __get_level(self):
-        return self.__table[2].contents[2].string.strip()
+    def __get_level(self, row):
+        return row.contents[2].string.strip()
 
-    def __get_type(self):
-        return self.__table[3].contents[2].string.strip()
+    def __get_type(self, row):
+        return row.contents[2].string.strip()
 
-    def __get_attribute(self):
-        return self.__table[4].contents[2].string.strip()
+    def __get_attribute(self, row):
+        return row.contents[2].string.strip()
     
-    def __get_family(self):
+    def __get_family(self, row):
       family = []
-      for children in self.__table[5].contents[2].stripped_strings:
+      for children in row.contents[2].stripped_strings:
           family.append(children)
       return family
     
-    def __get_prior_forms(self):
+    def __get_prior_forms(self, row):
         prior_forms = []
-        table_element = self.__table[8].contents[2].a
+        table_element = row.contents[2].a
 
         while table_element is not None:
           try:
@@ -64,9 +86,9 @@ class Digimon:
 
         return prior_forms
 
-    def __get_next_forms(self):
+    def __get_next_forms(self, row):
         next_forms = []
-        table_element = self.__table[9].contents[2].a
+        table_element = row.contents[2].a
 
         while table_element is not None:
           try:
@@ -78,21 +100,20 @@ class Digimon:
 
         return next_forms
       
-    def __get_variations(self):
-      if (len(self.__table) >= 18):
-          variations = []
-          table_element = self.__table[17].contents[1].table.find_all('tr')[1].a
-
-          while table_element is not None:
-            try:
-                if table_element.has_attr("title"):
-                  variations.append(table_element.get_text())
-            except AttributeError:
-                pass
-            table_element = table_element.next_sibling
-          return variations
-      else:
-        return []
+    def __set_variations(self, row):
+        try:
+            variations = []
+            table_element = row.contents[1].table.contents[3].a
+            while table_element is not None:
+              try:
+                  if table_element.has_attr("title"):
+                    variations.append(table_element.get_text())
+              except AttributeError:
+                  pass
+              table_element = table_element.next_sibling
+            self.variations = variations
+        except Exception:
+            pass
           
 
 def get_page_content(url):
