@@ -20,6 +20,18 @@ __author__ = "Tiago Loriato"
 __version__ = "0.1.0"
 __license__ = "GNU GPLv3"
 
+class Database():
+    def __init__(self):
+        self.session = self.__database_session()
+
+    def __database_session(self):
+        from neo4j import GraphDatabase, basic_auth
+        driver = GraphDatabase.driver(dot_env["NEO4J_BOLT_IP"], auth=basic_auth(dot_env["NEO4J_USER"], dot_env["NEO4J_PASSWORD"]))
+        return driver.session()
+    
+    def __add_digimon(self, digimon):
+      raise Exception("Not implemented")
+
 class DummyQueue:
     def __init__(self):
         self.__cache = {}
@@ -85,7 +97,6 @@ class Digimon:
                 self.__set_variations(row)
             else:
               pass
-
 
         if add_to_queue is not None:
             for (a, b, c) in itertools.zip_longest(self.next_forms, self.prior_forms, self.variations):
@@ -173,10 +184,7 @@ class Digimon:
         except Exception:
             pass
         
-def database_session():
-    from neo4j import GraphDatabase, basic_auth
-    driver = GraphDatabase.driver(dot_env["NEO4J_BOLT_IP"], auth=basic_auth(dot_env["NEO4J_USER"], dot_env["NEO4J_PASSWORD"]))
-    return driver.session()
+
 
 def main():
     """ Main entry point of the app """
