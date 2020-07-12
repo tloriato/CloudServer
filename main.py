@@ -2,6 +2,8 @@
 import sys
 import os
 import requests
+import itertools  
+import json
 from ratelimit import limits, sleep_and_retry
 import queue as Queue
 from bs4 import BeautifulSoup
@@ -18,45 +20,42 @@ __author__ = "Tiago Loriato"
 __version__ = "0.1.0"
 __license__ = "GNU GPLv3"
 
-class CrawlerQueue:  
+class DummyQueue:
     def __init__(self):
         self.__cache = {}
-        self.__queue = Queue.Queue(maxsize=0)
-    
+        self.__queue = []
+
     @sleep_and_retry
-    @limits(calls=10, period=60*60)
-    def __get_page_content(self, name):
+    @limits(calls=60, period=60*60)
+    def __crawler(self, name):
       base_url = "https://digimon.fandom.com/wiki/"
       response = requests.get(base_url + name, headers={'Accept-Encoding': 'identity'})
       if response.status_code != 200:
           raise Exception("Failed Call")
       else:
         return response.content
-    
-    def get(self):
-        try:
-            digimon_name = self.__queue.get_nowait()
-        except Queue.Empty:
-            return None
-        try:
-            htmldoc = self.__get_page_content(digimon_name)
-            return htmldoc
-        except:
-            self.__queue.put(digimon_name)
-            return None
 
     def add(self, name):
-        if self.__cache.get(name, None) is None:
+        if (self.__cache.get(name, None) is None):
             self.__cache[name] = 1
-            self.__queue.put(name)
+            self.__queue.append(name)
             return True
-        return False
+        else:
+            return False
     
+    def get(self):
+        digimon = self.__queue.pop()
+        if digimon is not None:
+            return self.__crawler(digimon)
+        return None
+
 class Digimon:
-    def __init__(self, htmldoc):
+    def __init__(self, htmldoc, add_to_queue = None):
         self.__table_trs = BeautifulSoup(htmldoc, "html.parser").table.find_all('tr')
 
         self.name = self.__get_name()
+
+        print(self.name)
 
         self.level = []
         self.attribute = []
@@ -65,7 +64,7 @@ class Digimon:
         self.prior_forms = []
         self.next_forms = []
         self.variations = []
-
+        
         for row in self.__table_trs:
             if row.find(text="Level"):
                 self.level = self.__get_level(row)
@@ -74,7 +73,7 @@ class Digimon:
             elif row.find(text="Type"):
                 self.type = self.__get_type(row)
             elif row.find(text="Family"):
-                 self.family = self.__get_family(row)
+                self.family = self.__get_family(row)
             elif row.find(text="Prior forms"):
                 self.prior_forms = self.__get_prior_forms(row)
             elif row.find(text="Next forms"):
@@ -86,6 +85,16 @@ class Digimon:
                 self.__set_variations(row)
             else:
               pass
+
+
+        if add_to_queue is not None:
+            for (a, b, c) in itertools.zip_longest(self.next_forms, self.prior_forms, self.variations):
+                if a is not None:
+                    add_to_queue(a)
+                if b is not None:
+                    add_to_queue(b)
+                if c is not None:
+                    add_to_queue(c)
 
     def __str__(self):
       return f"Name: {self.name} \nLevel: {self.level} \nType: {self.type} \nAttribute: {self.attribute} \nFamily: {self.family} \nPrior Forms: {self.prior_forms} \nNext Forms: {self.next_forms} \nVariations: {self.variations}"
@@ -158,8 +167,18 @@ def database_session():
 
 def main():
     """ Main entry point of the app """
-    #session = database_session()
-    #print(get_digimon_info("https://digimon.fandom.com/wiki/Agumon"))
+    queue = DummyQueue()
+    queue.add('Agumon')
+
+    htmldoc = queue.get()
+
+    f = open("results.txt", "w")
+
+    while(htmldoc is not None):
+        digimon = Digimon(htmldoc, queue.add)
+        f.write(digimon.__str__())
+        f.write("\n\n\n\n\n\n")
+        htmldoc = queue.get()
 
 def test():
 
@@ -176,7 +195,7 @@ def test():
 
 if __name__ == "__main__":
     """ This is executed when run from the command line """
-    if sys.argv[1] == "test":
+    if len(sys.argv) > 1 and sys.argv[1] == "test":
       test()
     else:
       main()
