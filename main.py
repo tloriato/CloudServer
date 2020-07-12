@@ -103,13 +103,26 @@ class Digimon:
         return self.__table_trs[0].td.span.b.string.strip()
 
     def __get_level(self, row):
-        return row.contents[2].string.strip()
+        level = row.contents[2].text.strip()
+        if (level.find('[') > 0):
+            return level[:level.find('[')]
+        return level
 
     def __get_type(self, row):
-        return row.contents[2].string.strip()
+      text = row.contents[2].text
+      #TODO: Deal with this when persisting data
+      if (text.find("(Ja:)") > 0 or text.find("(En:)") > 0):
+          types = []
+          types.append(text[text.find("("):text.find("(", text.find(")"))].strip())
+          types.append(text[text.find("(", text.find("(") + 1):].strip())
+          return types
+      return [text.strip()]
 
     def __get_attribute(self, row):
-        return row.contents[2].string.strip()
+        attributes = []
+        for attribute in row.contents[2].stripped_strings:
+            attributes.append(attribute)
+        return attributes
     
     def __get_family(self, row):
       family = []
@@ -186,8 +199,8 @@ def test():
         Agumon = Digimon(htmldoc)
         assert Agumon.name == "Agumon"
         assert Agumon.level == "Rookie"
-        assert Agumon.type == "Reptile"
-        assert Agumon.attribute == "Vaccine"
+        assert Agumon.type == ["Reptile"]
+        assert Agumon.attribute == ["Vaccine"]
         assert Agumon.family == ["Nature Spirits", "Virus Busters", "Metal Empire", "Unknown", "Dragon's Roar"]
         assert Agumon.prior_forms == ["Koromon"] 
         assert Agumon.next_forms == ["Greymon", "Centarumon", "Meramon", "BlackAgumon", "Agumon -Yuki's Kizuna-"]
@@ -195,7 +208,16 @@ def test():
 
 if __name__ == "__main__":
     """ This is executed when run from the command line """
+
     if len(sys.argv) > 1 and sys.argv[1] == "test":
       test()
+
+    elif len(sys.argv) > 1 and sys.argv[1] == "single":
+      queue = DummyQueue()
+      queue.add(" ".join(sys.argv[2:]))
+      htmldoc = queue.get()
+      digimon = Digimon(htmldoc, queue.add)
+      print(digimon)
+
     else:
       main()
