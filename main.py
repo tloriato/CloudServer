@@ -8,6 +8,7 @@ from ratelimit import limits, sleep_and_retry
 import queue as Queue
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv, find_dotenv
+from neo4j import GraphDatabase, basic_auth
 
 load_dotenv(find_dotenv())
 dot_env = os.environ
@@ -21,16 +22,66 @@ __version__ = "0.1.0"
 __license__ = "GNU GPLv3"
 
 class Database():
+    #TODO: Optimize the hell out of this later
     def __init__(self):
         self.session = self.__database_session()
 
     def __database_session(self):
-        from neo4j import GraphDatabase, basic_auth
         driver = GraphDatabase.driver(dot_env["NEO4J_BOLT_IP"], auth=basic_auth(dot_env["NEO4J_USER"], dot_env["NEO4J_PASSWORD"]))
         return driver.session()
     
-    def __add_digimon(self, digimon):
-      raise Exception("Not implemented")
+    def __get(self, digimon_name):
+        try:
+            query = "MATCH (n:Digimon) WHERE n.name = {name} RETURN n.name"
+            return self.session.run(query, {"name": digimon_name}).values()[0]
+        except:
+            return None
+
+    def __create(self, digimon):
+        return self.session.run("CREATE (d:Digimon {name: $name}) RETURN d.name", name=digimon.name).values()[0]
+
+    def __create_by_name(self, digimon_name):
+        return self.session.run("CREATE (d:Digimon {name: $name}) RETURN d.name", name=digimon_name).values()[0]
+
+    def __get_or_create_digimon(self, digimon):
+        node = self.__get(digimon)
+        if node is None or node.single() is None:
+            return self.__create(digimon)
+        return node
+    
+    def __get_or_create_digimon_by_name(self, digimon_name):
+        node = self.__get(digimon_name)
+        if node is None:
+            return self.__create_by_name(digimon_name)
+        return node
+
+    def __add_evolution(self, digimon_node, evolution_node):
+        digimon_name = digimon_node[0]
+        evolution_name = evolution_node[0]
+        return self.session.run("MATCH (n:Digimon) WHERE n.name = $digimon_name MATCH (d:Digimon) WHERE d.name = $evolution_name CREATE (n)-[:EVOLVES_TO]->(d)", digimon_name=digimon_name, evolution_name=evolution_name)
+
+    def __add_variation(self, digimon_node, variation_node):
+        digimon_name = digimon_node[0]
+        variation_name = variation_node[0]
+        return self.session.run("MATCH (n:Digimon) WHERE n.name = $digimon_name MATCH (d:Digimon) WHERE d.name = $variation_name CREATE (n)-[:IS_VARIATION]->(d)", digimon_name=digimon_name, variation_name=variation_name)
+
+    def add(self, digimon):
+        main_node = self.__get_or_create_digimon(digimon)
+
+        # TODO: Deal with EN vs JP versions
+        # TODO: Add the other properties (type, family, level, etc)
+        for evolution in digimon.next_forms:
+            next_form = self.__get_or_create_digimon_by_name(evolution)
+            self.__add_evolution(main_node, next_form)
+        
+        for children in digimon.prior_forms:
+            children = self.__get_or_create_digimon_by_name(children)
+            self.__add_evolution(children, main_node)
+        # 
+        for variation in digimon.variations:
+            other = self.__get_or_create_digimon_by_name(variation)
+            self.__add_variation(main_node, other)
+
 
 class DummyQueue:
     def __init__(self):
@@ -38,7 +89,7 @@ class DummyQueue:
         self.__queue = []
 
     @sleep_and_retry
-    @limits(calls=60, period=60*60)
+    @limits(calls=600000000000, period=60*60)
     def __crawler(self, name):
       base_url = "https://digimon.fandom.com/wiki/"
       response = requests.get(base_url + name, headers={'Accept-Encoding': 'identity'})
@@ -62,53 +113,66 @@ class DummyQueue:
         return None
 
 class Digimon:
-    def __init__(self, htmldoc, add_to_queue = None):
+    def __init__(self, htmldoc, add_to_queue = None, add_to_database = None):
         self.__table_trs = BeautifulSoup(htmldoc, "html.parser").table.find_all('tr')
-
-        self.name = self.__get_name()
-
-        print(self.name)
-
-        self.level = []
-        self.attribute = []
-        self.type = []
-        self.family = []
-        self.prior_forms = []
-        self.next_forms = []
-        self.variations = []
         
-        for row in self.__table_trs:
-            if row.find(text="Level"):
-                self.level = self.__get_level(row)
-            elif row.find(text="Attribute"):
-                self.attribute = self.__get_attribute(row)
-            elif row.find(text="Type"):
-                self.type = self.__get_type(row)
-            elif row.find(text="Family"):
-                self.family = self.__get_family(row)
-            elif row.find(text="Prior forms"):
-                self.prior_forms = self.__get_prior_forms(row)
-            elif row.find(text="Next forms"):
-                self.next_forms = self.__get_next_forms(row)
-            elif row.find(text="Variations"):
-                # TODO: Fix this. We call this function twice because of the "expand" element
-                # when it should be called just once. Right now we are ignoring the error on the second call inside
-                # the function and leaving the instance variable untouched
-                self.__set_variations(row)
-            else:
-              pass
+        print(f'Parsing...')
 
-        if add_to_queue is not None:
-            for (a, b, c) in itertools.zip_longest(self.next_forms, self.prior_forms, self.variations):
-                if a is not None:
-                    add_to_queue(a)
-                if b is not None:
-                    add_to_queue(b)
-                if c is not None:
-                    add_to_queue(c)
+        try:
+
+            self.name = self.__get_name()
+
+            self.level = []
+            self.attribute = []
+            self.type = []
+            self.family = []
+            self.prior_forms = []
+            self.next_forms = []
+            self.variations = []
+        
+        
+            for row in self.__table_trs:
+                if row.find(text="Level"):
+                    self.level = self.__get_level(row)
+                elif row.find(text="Attribute"):
+                    self.attribute = self.__get_attribute(row)
+                elif row.find(text="Type"):
+                    self.type = self.__get_type(row)
+                elif row.find(text="Family"):
+                    self.family = self.__get_family(row)
+                elif row.find(text="Prior forms"):
+                    self.prior_forms = self.__get_prior_forms(row)
+                elif row.find(text="Next forms"):
+                    self.next_forms = self.__get_next_forms(row)
+                elif row.find(text="Variations"):
+                    # TODO: Fix this. We call this function twice because of the "expand" element
+                    # when it should be called just once. Right now we are ignoring the error on the second call inside
+                    # the function and leaving the instance variable untouched
+                    self.__set_variations(row)
+                else:
+                    pass
+
+            if add_to_queue is not None:
+                for (a, b, c) in itertools.zip_longest(self.next_forms, self.prior_forms, self.variations):
+                    if a is not None:
+                        add_to_queue(a)
+                    if b is not None:
+                        add_to_queue(b)
+                    if c is not None:
+                        add_to_queue(c)
+
+            if add_to_database is not None:
+                add_to_database(self)
+            
+            print(f'Finished {self.name}')
+        except:
+            print(f'Letting it go...')
 
     def __str__(self):
-      return f"Name: {self.name} \nLevel: {self.level} \nType: {self.type} \nAttribute: {self.attribute} \nFamily: {self.family} \nPrior Forms: {self.prior_forms} \nNext Forms: {self.next_forms} \nVariations: {self.variations}"
+        return f"Name: {self.name} \nLevel: {self.level} \nType: {self.type} \nAttribute: {self.attribute} \nFamily: {self.family} \nPrior Forms: {self.prior_forms} \nNext Forms: {self.next_forms} \nVariations: {self.variations}"
+
+    def get_name(self):
+        return self.name
 
     def __get_name(self):
         return self.__table_trs[0].td.span.b.string.strip()
@@ -184,11 +248,10 @@ class Digimon:
         except Exception:
             pass
         
-
-
 def main():
     """ Main entry point of the app """
     queue = DummyQueue()
+    db = Database()
     queue.add('Agumon')
 
     htmldoc = queue.get()
@@ -196,9 +259,7 @@ def main():
     f = open("results.txt", "w")
 
     while(htmldoc is not None):
-        digimon = Digimon(htmldoc, queue.add)
-        f.write(digimon.__str__())
-        f.write("\n\n\n\n\n\n")
+        digimon = Digimon(htmldoc, queue.add, db.add)
         htmldoc = queue.get()
 
 def test():
@@ -222,9 +283,10 @@ if __name__ == "__main__":
 
     elif len(sys.argv) > 1 and sys.argv[1] == "single":
       queue = DummyQueue()
+      db = Database()
       queue.add(" ".join(sys.argv[2:]))
       htmldoc = queue.get()
-      digimon = Digimon(htmldoc, queue.add)
+      digimon = Digimon(htmldoc, queue.add, db.add)
       print(digimon)
 
     else:
