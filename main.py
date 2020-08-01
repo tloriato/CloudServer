@@ -30,7 +30,7 @@ class Database():
         driver = GraphDatabase.driver(dot_env["NEO4J_BOLT_IP"], auth=basic_auth(dot_env["NEO4J_USER"], dot_env["NEO4J_PASSWORD"]))
         return driver.session()
     
-    def __get(self, digimon_name):
+    def __get_digimon(self, digimon_name):
         query = "MATCH (n:Digimon) WHERE n.name = $name RETURN n.name"
         return self.session.run(query, {"name": digimon_name}).single()
         
@@ -38,11 +38,39 @@ class Database():
         return self.session.run("CREATE (d:Digimon {name: $name}) RETURN d.name", name=digimon_name).single()
     
     def __get_or_create_digimon_by_name(self, digimon_name):
-        node = self.__get(digimon_name)
+        node = self.__get_digimon(digimon_name)
         if node is None:
             print(f'Criando {digimon_name}')
             return self.__create_by_name(digimon_name)
         return node
+    
+    def __get_attribute(self, attribute_name):
+        query = "MATCH (n:Attribute) WHERE n.name = $name RETURN n.name"
+        return self.session.run(query, {"name": attribute_name}).single()
+
+    def __create_attribute(self, attribute_name):
+        return self.session.run("CREATE (d:Attribute {name: $name}) RETURN d.name", name=attribute_name).single()
+
+    def __get_or_create_attribute_by_name(self, attribute_name):
+        attribute = self.__get_attribute(attribute_name)
+        if attribute is None:
+            print(f'Creating attribute {attribute_name}')
+            return self.__create_attribute(attribute_name)
+        return attribute
+
+    def __get_family(self, family_name):
+        query = "MATCH (n:Family) WHERE n.name = $name RETURN n.name"
+        return self.session.run(query, {"name": family_name}).single()
+
+    def __create_family(self, family_name):
+        return self.session.run("CREATE (d:Family {name: $name}) RETURN d.name", name=family_name).single()
+
+    def __get_or_create_family_by_name(self, family_name):
+        family = self.__get_family(family_name)
+        if family is None:
+            print(f'Creating family {family_name}')
+            return self.__create_family(family_name)
+        return family
 
     def __add_evolution(self, digimon_node, evolution_node):
         digimon_name = digimon_node[0]
@@ -53,15 +81,32 @@ class Database():
         digimon_name = digimon_node[0]
         variation_name = variation_node[0]
         return self.session.run("MATCH (n:Digimon) WHERE n.name = $digimon_name MATCH (d:Digimon) WHERE d.name = $variation_name MERGE (n)-[:IS_VARIATION]->(d)", digimon_name=digimon_name, variation_name=variation_name)
+    
+    def __add_attribute(self, digimon_node, attribute_node):
+        digimon = digimon_node[0]
+        attribute = attribute_node[0]
+        return self.session.run("MATCH (n:Digimon) WHERE n.name = $digimon MATCH (a:Attribute) WHERE a.name = $attribute MERGE (n)-[:HAS_ATTRIBUTE]->(a)", digimon=digimon, attribute=attribute)
+
+    def __add_family(self, digimon_node, family_node):
+        digimon = digimon_node[0]
+        family = family_node[0]
+        return self.session.run("MATCH (n:Digimon) WHERE n.name = $digimon MATCH (f:Family) WHERE f.name = $family MERGE (n)-[:BELONGS_TO]->(f)", digimon=digimon, family=family)
 
     def add(self, digimon):
         main_node = self.__get_or_create_digimon_by_name(digimon.name)
 
         # TODO: Deal with EN vs JP versions
-        # TODO: Add the other properties (type, family, level, etc)
         for evolution in digimon.next_forms:
             next_form = self.__get_or_create_digimon_by_name(evolution)
             self.__add_evolution(main_node, next_form)
+
+        for attribute in digimon.attribute:
+            attribute_name = self.__get_or_create_attribute_by_name(attribute)
+            self.__add_attribute(main_node, attribute_name)
+        
+        for family in digimon.family:
+            family_name = self.__get_or_create_family_by_name(family)
+            self.__add_family(main_node, family_name)
         
         for children in digimon.prior_forms:
             children = self.__get_or_create_digimon_by_name(children)
@@ -107,55 +152,54 @@ class Digimon:
         
         print(f'Parsing...')
 
-        try:
-            self.name = self.__get_name()
+    
+        self.name = self.__get_name()
 
-            self.level = []
-            self.attribute = []
-            self.type = []
-            self.family = []
-            self.prior_forms = []
-            self.next_forms = []
-            self.variations = []
-        
-        
-            for row in self.__table_trs:
-                if row.find(text="Level"):
-                    self.level = self.__get_level(row)
-                elif row.find(text="Attribute"):
-                    self.attribute = self.__get_attribute(row)
-                elif row.find(text="Type"):
-                    self.type = self.__get_type(row)
-                elif row.find(text="Family"):
-                    self.family = self.__get_family(row)
-                elif row.find(text="Prior forms"):
-                    self.prior_forms = self.__get_prior_forms(row)
-                elif row.find(text="Next forms"):
-                    self.next_forms = self.__get_next_forms(row)
-                elif row.find(text="Variations"):
-                    # TODO: Fix this. We call this function twice because of the "expand" element
-                    # when it should be called just once. Right now we are ignoring the error on the second call inside
-                    # the function and leaving the instance variable untouched
-                    self.__set_variations(row)
-                else:
-                    pass
+        self.level = []
+        self.attribute = []
+        self.type = []
+        self.family = []
+        self.prior_forms = []
+        self.next_forms = []
+        self.variations = []
+    
+    
+        for row in self.__table_trs:
+            if row.find(text="Level"):
+                self.level = self.__get_level(row)
+            elif row.find(text="Attribute"):
+                self.attribute = self.__get_attribute(row)
+            elif row.find(text="Type"):
+                self.type = self.__get_type(row)
+            elif row.find(text="Family"):
+                self.family = self.__get_family(row)
+            elif row.find(text="Prior forms"):
+                self.prior_forms = self.__get_prior_forms(row)
+            elif row.find(text="Next forms"):
+                self.next_forms = self.__get_next_forms(row)
+            elif row.find(text="Variations"):
+                # TODO: Fix this. We call this function twice because of the "expand" element
+                # when it should be called just once. Right now we are ignoring the error on the second call inside
+                # the function and leaving the instance variable untouched
+                self.__set_variations(row)
+            else:
+                pass
 
-            if add_to_queue is not None:
-                for (a, b, c) in itertools.zip_longest(self.next_forms, self.prior_forms, self.variations):
-                    if a is not None:
-                        add_to_queue(a)
-                    if b is not None:
-                        add_to_queue(b)
-                    if c is not None:
-                        add_to_queue(c)
+        if add_to_queue is not None:
+            for (a, b, c) in itertools.zip_longest(self.next_forms, self.prior_forms, self.variations):
+                if a is not None:
+                    add_to_queue(a)
+                if b is not None:
+                    add_to_queue(b)
+                if c is not None:
+                    add_to_queue(c)
 
-            if add_to_database is not None:
-                add_to_database(self)
-            
-            print(f'Finished {self.name}')
+        if add_to_database is not None:
+            add_to_database(self)
         
-        except:
-            print(f'Letting it go...')
+        print(f'Finished {self.name}')
+    
+ 
 
     def __str__(self):
         return f"Name: {self.name} \nLevel: {self.level} \nType: {self.type} \nAttribute: {self.attribute} \nFamily: {self.family} \nPrior Forms: {self.prior_forms} \nNext Forms: {self.next_forms} \nVariations: {self.variations}"
