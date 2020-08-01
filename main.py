@@ -30,91 +30,45 @@ class Database():
         driver = GraphDatabase.driver(dot_env["NEO4J_BOLT_IP"], auth=basic_auth(dot_env["NEO4J_USER"], dot_env["NEO4J_PASSWORD"]))
         return driver.session()
     
-    def __get_digimon(self, digimon_name):
-        query = "MATCH (n:Digimon) WHERE n.name = $name RETURN n.name"
-        return self.session.run(query, {"name": digimon_name}).single()
-        
-    def __create_by_name(self, digimon_name):
-        return self.session.run("CREATE (d:Digimon {name: $name}) RETURN d.name", name=digimon_name).single()
-    
-    def __get_or_create_digimon_by_name(self, digimon_name):
-        node = self.__get_digimon(digimon_name)
-        if node is None:
-            print(f'Criando {digimon_name}')
-            return self.__create_by_name(digimon_name)
-        return node
-    
-    def __get_attribute(self, attribute_name):
-        query = "MATCH (n:Attribute) WHERE n.name = $name RETURN n.name"
-        return self.session.run(query, {"name": attribute_name}).single()
+    def __get_node(self, node_type, name):
+        query = "MATCH (n:$node_type) WHERE n.name = $name RETURN n.name"
+        return self.session.run(query, node_type=node_type, name=name).single()
 
-    def __create_attribute(self, attribute_name):
-        return self.session.run("CREATE (d:Attribute {name: $name}) RETURN d.name", name=attribute_name).single()
+    def __create_node(self, node_type, name):
+        return self.session.run("CREATE (n:$type {name: $name}) RETURN d.name", type=node_type, name=name).single()
 
-    def __get_or_create_attribute_by_name(self, attribute_name):
-        attribute = self.__get_attribute(attribute_name)
-        if attribute is None:
-            print(f'Creating attribute {attribute_name}')
-            return self.__create_attribute(attribute_name)
-        return attribute
+    def __create_relationship(self,origin_name, origin_type, relationship_type, destination_name, destination_type):
+        return self.session.run("MATCH (n:$origin_type) WHERE n.name = $origin_name MATCH (d:$destination_type) WHERE d.name = $destination_name MERGE (n)-[:$relationship_type]->(d)", relationship_type=relationship_type, origin_name=origin_name, origin_type=origin_type, destination_name=destination_name, destination_type=destination_type)
 
-    def __get_family(self, family_name):
-        query = "MATCH (n:Family) WHERE n.name = $name RETURN n.name"
-        return self.session.run(query, {"name": family_name}).single()
-
-    def __create_family(self, family_name):
-        return self.session.run("CREATE (d:Family {name: $name}) RETURN d.name", name=family_name).single()
-
-    def __get_or_create_family_by_name(self, family_name):
-        family = self.__get_family(family_name)
-        if family is None:
-            print(f'Creating family {family_name}')
-            return self.__create_family(family_name)
-        return family
-
-    def __add_evolution(self, digimon_node, evolution_node):
-        digimon_name = digimon_node[0]
-        evolution_name = evolution_node[0]
-        return self.session.run("MATCH (n:Digimon) WHERE n.name = $digimon_name MATCH (d:Digimon) WHERE d.name = $evolution_name MERGE (n)-[:EVOLVES_TO]->(d)", digimon_name=digimon_name, evolution_name=evolution_name)
-
-    def __add_variation(self, digimon_node, variation_node):
-        digimon_name = digimon_node[0]
-        variation_name = variation_node[0]
-        return self.session.run("MATCH (n:Digimon) WHERE n.name = $digimon_name MATCH (d:Digimon) WHERE d.name = $variation_name MERGE (n)-[:IS_VARIATION]->(d)", digimon_name=digimon_name, variation_name=variation_name)
-    
-    def __add_attribute(self, digimon_node, attribute_node):
-        digimon = digimon_node[0]
-        attribute = attribute_node[0]
-        return self.session.run("MATCH (n:Digimon) WHERE n.name = $digimon MATCH (a:Attribute) WHERE a.name = $attribute MERGE (n)-[:HAS_ATTRIBUTE]->(a)", digimon=digimon, attribute=attribute)
-
-    def __add_family(self, digimon_node, family_node):
-        digimon = digimon_node[0]
-        family = family_node[0]
-        return self.session.run("MATCH (n:Digimon) WHERE n.name = $digimon MATCH (f:Family) WHERE f.name = $family MERGE (n)-[:BELONGS_TO]->(f)", digimon=digimon, family=family)
+    def __get_or_create(self, node_type, name):
+        result = self.__get_node(node_type, name)
+        if result is None:
+            return self.__create_node(node_type, name)
+        return result
 
     def add(self, digimon):
-        main_node = self.__get_or_create_digimon_by_name(digimon.name)
+        main_node = self.__get_or_create("Digimon", digimon.name)
 
         # TODO: Deal with EN vs JP versions
         for evolution in digimon.next_forms:
-            next_form = self.__get_or_create_digimon_by_name(evolution)
-            self.__add_evolution(main_node, next_form)
+            next_form = self.__get_or_create("Digimon", evolution)
+            self.__create_relationship(main_node, "Digimon", "EVOLTES_TO", next_form, "Digimon")
 
         for attribute in digimon.attribute:
-            attribute_name = self.__get_or_create_attribute_by_name(attribute)
-            self.__add_attribute(main_node, attribute_name)
+            attribute_name = self.__get_or_create("Attribute", attribute)
+            self.__create_relationship(main_node, "Digimon", "HAS_ATTRIBUTE", attribute_name, "Attribute")
         
         for family in digimon.family:
-            family_name = self.__get_or_create_family_by_name(family)
-            self.__add_family(main_node, family_name)
+            family_name = self.__get_or_create("Family", family)
+            self.__create_relationship(main_node, "Digimon", "BELONGS_TO_FAMILY", family_name, "Family")
         
         for children in digimon.prior_forms:
-            children = self.__get_or_create_digimon_by_name(children)
-            self.__add_evolution(children, main_node)
-        # 
+            children = self.__get_or_create("Digimon", children)
+            self.__create_relationship(children, "Digimon", "EVOLTES_TO", main_node, "Digimon")
+
         for variation in digimon.variations:
-            other = self.__get_or_create_digimon_by_name(variation)
-            self.__add_variation(main_node, other)
+            other = self.__get_or_create("Digimon", variation)
+            self.__create_relationship(main_node, "Digimon", "IS_VARIATION", other, "Digimon")
 
 
 class DummyQueue:
