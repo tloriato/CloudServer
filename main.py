@@ -31,42 +31,31 @@ class Database():
         return driver.session()
     
     def __get(self, digimon_name):
-        try:
-            query = "MATCH (n:Digimon) WHERE n.name = {name} RETURN n.name"
-            return self.session.run(query, {"name": digimon_name}).values()[0]
-        except:
-            return None
-
-    def __create(self, digimon):
-        return self.session.run("CREATE (d:Digimon {name: $name}) RETURN d.name", name=digimon.name).values()[0]
-
+        query = "MATCH (n:Digimon) WHERE n.name = $name RETURN n.name"
+        return self.session.run(query, {"name": digimon_name}).single()
+        
     def __create_by_name(self, digimon_name):
-        return self.session.run("CREATE (d:Digimon {name: $name}) RETURN d.name", name=digimon_name).values()[0]
-
-    def __get_or_create_digimon(self, digimon):
-        node = self.__get(digimon)
-        if node is None or node.single() is None:
-            return self.__create(digimon)
-        return node
+        return self.session.run("CREATE (d:Digimon {name: $name}) RETURN d.name", name=digimon_name).single()
     
     def __get_or_create_digimon_by_name(self, digimon_name):
         node = self.__get(digimon_name)
         if node is None:
+            print(f'Criando {digimon_name}')
             return self.__create_by_name(digimon_name)
         return node
 
     def __add_evolution(self, digimon_node, evolution_node):
         digimon_name = digimon_node[0]
         evolution_name = evolution_node[0]
-        return self.session.run("MATCH (n:Digimon) WHERE n.name = $digimon_name MATCH (d:Digimon) WHERE d.name = $evolution_name CREATE (n)-[:EVOLVES_TO]->(d)", digimon_name=digimon_name, evolution_name=evolution_name)
+        return self.session.run("MATCH (n:Digimon) WHERE n.name = $digimon_name MATCH (d:Digimon) WHERE d.name = $evolution_name MERGE (n)-[:EVOLVES_TO]->(d)", digimon_name=digimon_name, evolution_name=evolution_name)
 
     def __add_variation(self, digimon_node, variation_node):
         digimon_name = digimon_node[0]
         variation_name = variation_node[0]
-        return self.session.run("MATCH (n:Digimon) WHERE n.name = $digimon_name MATCH (d:Digimon) WHERE d.name = $variation_name CREATE (n)-[:IS_VARIATION]->(d)", digimon_name=digimon_name, variation_name=variation_name)
+        return self.session.run("MATCH (n:Digimon) WHERE n.name = $digimon_name MATCH (d:Digimon) WHERE d.name = $variation_name MERGE (n)-[:IS_VARIATION]->(d)", digimon_name=digimon_name, variation_name=variation_name)
 
     def add(self, digimon):
-        main_node = self.__get_or_create_digimon(digimon)
+        main_node = self.__get_or_create_digimon_by_name(digimon.name)
 
         # TODO: Deal with EN vs JP versions
         # TODO: Add the other properties (type, family, level, etc)
@@ -119,7 +108,6 @@ class Digimon:
         print(f'Parsing...')
 
         try:
-
             self.name = self.__get_name()
 
             self.level = []
@@ -165,6 +153,7 @@ class Digimon:
                 add_to_database(self)
             
             print(f'Finished {self.name}')
+        
         except:
             print(f'Letting it go...')
 
