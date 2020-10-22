@@ -1,0 +1,1 @@
+This folder houses the HTML files from The Wiki to avoid overloading their servers.

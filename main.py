@@ -9,6 +9,8 @@ import queue as Queue
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv, find_dotenv
 from neo4j import GraphDatabase, basic_auth
+from src import test
+from src import Digimon
 
 load_dotenv(find_dotenv())
 dot_env = os.environ
@@ -20,6 +22,27 @@ Module Docstring
 __author__ = "Tiago Loriato"
 __version__ = "0.1.0"
 __license__ = "GNU GPLv3"
+
+class Storage():
+    def __init__(self, path):
+        self.__path = path
+        return
+
+    def __load(self):
+        for file in os.listdir(self.__path):
+            return
+        return
+
+    def retrieve(self, name):
+        if (os.path.isfile(f'{self.__path}/{name}.html')):
+            with open(f'{self.__path}/{name}.html') as html_file:
+                content = html_file.read()
+            return content
+        return None
+
+    def add_page(self, name, html):
+        open(f'{self.__path}/{name}.html', 'wb').write(html)
+        return
 
 class Database():
     #TODO: Optimize the hell out of this later
@@ -92,10 +115,57 @@ class Database():
         family = family_node[0]
         return self.session.run("MATCH (n:Digimon) WHERE n.name = $digimon MATCH (f:Family) WHERE f.name = $family MERGE (n)-[:BELONGS_TO]->(f)", digimon=digimon, family=family)
 
+    def __get_type(self, type_name):
+        query = "MATCH (n:Type) WHERE n.name = $name RETURN n.name"
+        return self.session.run(query, {"name": type_name}).single()
+
+    def __create_type(self, type_name):
+        return self.session.run("CREATE (d:Type {name: $name}) RETURN d.name", name=type_name).single()
+
+    def __get_or_create_type_by_name(self, type_name):
+        type_name_node = self.__get_type(type_name)
+        if type_name_node is None:
+            print(f'Creating type {type_name}')
+            return self.__create_type(type_name)
+        return type_name_node
+
+    def __add_type(self, digimon_node, type_node):
+        digimon = digimon_node[0]
+        type_name_node = type_node[0]
+        return self.session.run("MATCH (n:Digimon) WHERE n.name = $digimon MATCH (f:Type) WHERE f.name = $type MERGE (n)-[:BELONGS_TO]->(f)", digimon=digimon, type=type_name_node)
+
+    def __get_level(self, level_name):
+        query = "MATCH (n:Level) WHERE n.name = $name RETURN n.name"
+        return self.session.run(query, {"name": level_name}).single()
+
+    def __create_level(self, level_name):
+        return self.session.run("CREATE (d:Level {name: $name}) RETURN d.name", name=level_name).single()
+
+    def __get_or_create_level_by_name(self, level_name):
+        level_name_node = self.__get_level(level_name)
+        if level_name_node is None:
+            print(f'Creating level {level_name}')
+            return self.__create_level(level_name)
+        return level_name_node
+
+    def __add_level(self, digimon_node, level_node):
+        digimon = digimon_node[0]
+        level_name_node = level_node[0]
+        return self.session.run("MATCH (n:Digimon) WHERE n.name = $digimon MATCH (f:Level) WHERE f.name = $level MERGE (n)-[:BELONGS_TO]->(f)", digimon=digimon, level=level_name_node)
+
     def add(self, digimon):
+        # TODO: Deal with EN vs JP versions
+
         main_node = self.__get_or_create_digimon_by_name(digimon.name)
 
-        # TODO: Deal with EN vs JP versions
+        if digimon.level is not None:
+            level_node = self.__get_or_create_level_by_name(digimon.level)
+            self.__add_level(main_node, level_node)
+
+        for type_node in digimon.type:
+            type_node = self.__get_or_create_type_by_name(type_node)
+            self.__add_type(main_node, type_node)
+
         for evolution in digimon.next_forms:
             next_form = self.__get_or_create_digimon_by_name(evolution)
             self.__add_evolution(main_node, next_form)
@@ -116,21 +186,34 @@ class Database():
             other = self.__get_or_create_digimon_by_name(variation)
             self.__add_variation(main_node, other)
 
-
-class DummyQueue:
-    def __init__(self):
+class DummyQueue():
+    def __init__(self, storage=None):
+        self.__Storage = storage
         self.__cache = {}
         self.__queue = []
 
     @sleep_and_retry
     @limits(calls=600000000000, period=60*60)
     def __crawler(self, name):
-      base_url = "https://digimon.fandom.com/wiki/"
-      response = requests.get(base_url + name, headers={'Accept-Encoding': 'identity'})
-      if response.status_code != 200:
-          raise Exception("Failed Call")
-      else:
-        return response.content
+
+        if (self.__Storage is not None):
+            retrieval = self.__Storage.retrieve(name)
+
+            if (retrieval is not None):
+                return retrieval
+
+        print(f'Getting {name} from Wiki...')
+        base_url = "https://digimon.fandom.com/wiki/"
+        response = requests.get(base_url + name, headers={'Accept-Encoding': 'identity'})
+        
+        if response.status_code != 200:
+            print(response.status_code)
+            return None
+            
+        else:
+            if (self.__Storage is not None):
+                self.__Storage.add_page(name, response.content)
+            return response.content
 
     def add(self, name):
         if (self.__cache.get(name, None) is None):
@@ -143,176 +226,34 @@ class DummyQueue:
     def get(self):
         digimon = self.__queue.pop()
         if digimon is not None:
-            return self.__crawler(digimon)
+            content = self.__crawler(digimon)
+            if (content is None):
+                return self.get()
+            return content
         return None
-
-class Digimon:
-    def __init__(self, htmldoc, add_to_queue = None, add_to_database = None):
-        self.__table_trs = BeautifulSoup(htmldoc, "html.parser").table.find_all('tr')
-        
-        print(f'Parsing...')
-
-    
-        self.name = self.__get_name()
-
-        self.level = []
-        self.attribute = []
-        self.type = []
-        self.family = []
-        self.prior_forms = []
-        self.next_forms = []
-        self.variations = []
-    
-    
-        for row in self.__table_trs:
-            if row.find(text="Level"):
-                self.level = self.__get_level(row)
-            elif row.find(text="Attribute"):
-                self.attribute = self.__get_attribute(row)
-            elif row.find(text="Type"):
-                self.type = self.__get_type(row)
-            elif row.find(text="Family"):
-                self.family = self.__get_family(row)
-            elif row.find(text="Prior forms"):
-                self.prior_forms = self.__get_prior_forms(row)
-            elif row.find(text="Next forms"):
-                self.next_forms = self.__get_next_forms(row)
-            elif row.find(text="Variations"):
-                # TODO: Fix this. We call this function twice because of the "expand" element
-                # when it should be called just once. Right now we are ignoring the error on the second call inside
-                # the function and leaving the instance variable untouched
-                self.__set_variations(row)
-            else:
-                pass
-
-        if add_to_queue is not None:
-            for (a, b, c) in itertools.zip_longest(self.next_forms, self.prior_forms, self.variations):
-                if a is not None:
-                    add_to_queue(a)
-                if b is not None:
-                    add_to_queue(b)
-                if c is not None:
-                    add_to_queue(c)
-
-        if add_to_database is not None:
-            add_to_database(self)
-        
-        print(f'Finished {self.name}')
-    
- 
-
-    def __str__(self):
-        return f"Name: {self.name} \nLevel: {self.level} \nType: {self.type} \nAttribute: {self.attribute} \nFamily: {self.family} \nPrior Forms: {self.prior_forms} \nNext Forms: {self.next_forms} \nVariations: {self.variations}"
-
-    def get_name(self):
-        return self.name
-
-    def __get_name(self):
-        return self.__table_trs[0].td.span.b.string.strip()
-
-    def __get_level(self, row):
-        level = row.contents[2].text.strip()
-        if (level.find('[') > 0):
-            return level[:level.find('[')]
-        return level
-
-    def __get_type(self, row):
-      text = row.contents[2].text
-      #TODO: Deal with this when persisting data
-      if (text.find("(Ja:)") > 0 or text.find("(En:)") > 0):
-          types = []
-          types.append(text[text.find("("):text.find("(", text.find(")"))].strip())
-          types.append(text[text.find("(", text.find("(") + 1):].strip())
-          return types
-      return [text.strip()]
-
-    def __get_attribute(self, row):
-        attributes = []
-        for attribute in row.contents[2].stripped_strings:
-            attributes.append(attribute)
-        return attributes
-    
-    def __get_family(self, row):
-      family = []
-      for children in row.contents[2].stripped_strings:
-          family.append(children)
-      return family
-    
-    def __get_prior_forms(self, row):
-        prior_forms = []
-        table_element = row.contents[2].a
-
-        while table_element is not None:
-          try:
-              if table_element.has_attr("title"):
-                prior_forms.append(table_element.get_text())
-          except AttributeError:
-              pass
-          table_element = table_element.next_sibling
-
-        return prior_forms
-
-    def __get_next_forms(self, row):
-        next_forms = []
-        table_element = row.contents[2].a
-
-        while table_element is not None:
-          try:
-              if table_element.has_attr("title"):
-                next_forms.append(table_element.get_text())
-          except AttributeError:
-              pass
-          table_element = table_element.next_sibling
-
-        return next_forms
-      
-    def __set_variations(self, row):
-        try:
-            variations = []
-            table_element = row.contents[1].table.contents[3].a
-            while table_element is not None:
-              try:
-                  if table_element.has_attr("title"):
-                    variations.append(table_element.get_text())
-              except AttributeError:
-                  pass
-              table_element = table_element.next_sibling
-            self.variations = variations
-        except Exception:
-            pass
         
 def main():
     """ Main entry point of the app """
-    queue = DummyQueue()
+    store = Storage("cache")
+    queue = DummyQueue(storage=store)
     db = Database()
-    queue.add('Agumon')
+
+    # Loads the Cache into the Database
+    
+
+    queue.add('Botamon')
 
     htmldoc = queue.get()
-
-    f = open("results.txt", "w")
 
     while(htmldoc is not None):
         digimon = Digimon(htmldoc, queue.add, db.add)
         htmldoc = queue.get()
 
-def test():
-
-    with open("agumon.html") as htmldoc:
-        Agumon = Digimon(htmldoc)
-        assert Agumon.name == "Agumon"
-        assert Agumon.level == "Rookie"
-        assert Agumon.type == ["Reptile"]
-        assert Agumon.attribute == ["Vaccine"]
-        assert Agumon.family == ["Nature Spirits", "Virus Busters", "Metal Empire", "Unknown", "Dragon's Roar"]
-        assert Agumon.prior_forms == ["Koromon"] 
-        assert Agumon.next_forms == ["Greymon", "Centarumon", "Meramon", "BlackAgumon", "Agumon -Yuki's Kizuna-"]
-        assert Agumon.variations == ['Agumon (2006 anime)', 'Agumon X', 'BlackAgumon', 'SnowAgumon', 'DotAgumon', 'Agumon Expert', 'Fake Agumon Expert', 'SantaAgumon', 'BushiAgumon', 'BlackAgumon X']
-
 if __name__ == "__main__":
     """ This is executed when run from the command line """
 
     if len(sys.argv) > 1 and sys.argv[1] == "test":
-      test()
+      test.main()
 
     elif len(sys.argv) > 1 and sys.argv[1] == "single":
       queue = DummyQueue()
